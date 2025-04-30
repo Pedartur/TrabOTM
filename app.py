@@ -17,12 +17,14 @@ TEMPLATE = '''
     <meta charset="utf-8">
     <title>Solucionador de Programação Linear</title>
     <style>
-      body { font-family: Arial, sans-serif; max-width: 800px; margin: auto; padding: 20px; }
+      body { font-family: Arial, sans-serif; max-width: 1000px; margin: auto; padding: 20px; }
       input, select, button { padding: 5px; margin: 5px 0; }
       .constraint { display: flex; gap: 5px; margin-bottom: 10px; align-items: center; }
       .constraint input, .constraint select { flex: 1; }
       .error { color: red; }
       #add-btn { margin-top: 10px; }
+      table { border-collapse: collapse; margin-top: 20px; }
+      th, td { border: 1px solid black; padding: 5px 10px; text-align: center; }
     </style>
     <script>
       function addConstraint() {
@@ -52,6 +54,13 @@ TEMPLATE = '''
       </select><br/>
       Z = <input type="number" step="any" name="c1" placeholder="Coeficiente de x" required> x +
       <input type="number" step="any" name="c2" placeholder="Coeficiente de y" required> y
+
+      <h2>Configurações do Gráfico</h2>
+      <label for="xmax">Limite X:</label>
+      <input type="number" step="any" name="xmax" value="10" required>
+      <label for="ymax">Limite Y:</label>
+      <input type="number" step="any" name="ymax" value="10" required>
+
       <h2>Restrições</h2>
       <div id="constraints"></div>
       <button type="button" id="add-btn" onclick="addConstraint()">Adicionar Restrição</button>
@@ -67,27 +76,27 @@ TEMPLATE = '''
       <p>Ponto ótimo: ({{ result.x_opt }}, {{ result.y_opt }})</p>
       <p>Valor ótimo Z = {{ result.z_opt }}</p>
       <h2>Método Gráfico</h2>
-      <img src="data:image/png;base64,{{ plot_url }}" alt="Região viável">
+      <img style="max-width: 100%; height: auto;" src="data:image/png;base64,{{ plot_url }}" alt="Região viável">
+      <h3>Pontos da Região Viável</h3>
+      <table>
+        <tr><th>x</th><th>y</th><th>Z</th></tr>
+        {% for pt in result.feasible_table %}
+        <tr><td>{{ pt[0] }}</td><td>{{ pt[1] }}</td><td>{{ pt[2] }}</td></tr>
+        {% endfor %}
+      </table>
     {% endif %}
   </body>
 </html>
 '''
 
-
 def solve_lp(c, constraints, opt_type='max'):
     points = []
     # interseções com eixos
     for a, b, op, cst in constraints:
-        if op == '<=':
-            if b != 0:
-                points.append((0, cst / b))
-            if a != 0:
-                points.append((cst / a, 0))
-        else:
-            if b != 0:
-                points.append((0, cst / b))
-            if a != 0:
-                points.append((cst / a, 0))
+        if b != 0:
+            points.append((0, cst / b))
+        if a != 0:
+            points.append((cst / a, 0))
     # interseções entre restrições
     n = len(constraints)
     for i in range(n):
@@ -101,6 +110,7 @@ def solve_lp(c, constraints, opt_type='max'):
                 points.append((x, y))
     # filtrar região viável
     feasible = []
+    feasible_table = []
     for x, y in points:
         if x < -1e-6 or y < -1e-6:
             continue
@@ -114,40 +124,44 @@ def solve_lp(c, constraints, opt_type='max'):
                 valido = False
                 break
         if valido:
-            feasible.append((round(x,6), round(y,6)))
+            x, y = round(x, 6), round(y, 6)
+            z = round(c[0]*x + c[1]*y, 6)
+            feasible.append((x, y))
+            feasible_table.append((x, y, z))
     feasible = list(set(feasible))
     if not feasible:
-        return None, []
+        return None, [], []
     # avaliar função objetivo
     melhor = None
-    for x, y in feasible:
-        z = c[0]*x + c[1]*y
+    for x, y, z in feasible_table:
         if melhor is None or (opt_type=='max' and z > melhor[2]) or (opt_type=='min' and z < melhor[2]):
             melhor = (x, y, z)
-    return melhor, feasible
+    return melhor, feasible, feasible_table
 
-
-def plot_region(constraints, feasible, best):
-    fig, ax = plt.subplots()
-    xmax = max(p[0] for p in feasible)*1.2
+def plot_region(constraints, feasible, best, xmax=10, ymax=10):
+    fig, ax = plt.subplots(figsize=(8,6))
     x_vals = np.linspace(0, xmax, 400)
     for a, b, op, cst in constraints:
         if abs(b) > 1e-6:
             y_vals = (cst - a*x_vals) / b
-            ax.plot(x_vals, y_vals)
+            ax.plot(x_vals, y_vals, label=f'{a}x + {b}y {op} {cst}')
         else:
             x_line = cst / a
-            ax.axvline(x_line)
+            ax.axvline(x_line, label=f'{a}x + {b}y {op} {cst}')
     cx = sum(p[0] for p in feasible)/len(feasible)
     cy = sum(p[1] for p in feasible)/len(feasible)
     sorted_pts = sorted(feasible, key=lambda P: math.atan2(P[1]-cy, P[0]-cx))
-    ax.add_patch(plt.Polygon(sorted_pts, alpha=0.3))
-    ax.plot(best[0], best[1], 'ro')
+    ax.add_patch(plt.Polygon(sorted_pts, alpha=0.3, label='Região Viável'))
+    for x, y in feasible:
+        ax.plot(x, y, 'bo')
+        ax.text(x + 0.1, y + 0.1, f'({x:.2f}, {y:.2f})', fontsize=8)
+    ax.plot(best[0], best[1], 'ro', label='Ponto Ótimo')
     ax.set_xlim(0, xmax)
-    ax.set_ylim(0, max(p[1] for p in feasible)*1.2)
+    ax.set_ylim(0, ymax)
     ax.set_xlabel('x')
     ax.set_ylabel('y')
     ax.set_title('Região Viável e Ponto Ótimo')
+    ax.legend()
     buf = BytesIO()
     fig.savefig(buf, format='png')
     plt.close(fig)
@@ -165,6 +179,8 @@ def solve():
     try:
         opt = request.form['opt']
         c = (float(request.form['c1']), float(request.form['c2']))
+        xmax = float(request.form.get('xmax', 10))
+        ymax = float(request.form.get('ymax', 10))
         constraints = []
         a_vals = request.form.getlist('a')
         b_vals = request.form.getlist('b')
@@ -172,11 +188,11 @@ def solve():
         c_vals = request.form.getlist('c')
         for a, b, op, cst in zip(a_vals, b_vals, op_vals, c_vals):
             constraints.append((float(a), float(b), op, float(cst)))
-        best, feasible = solve_lp(c, constraints, opt)
+        best, feasible, feasible_table = solve_lp(c, constraints, opt)
         if best is None:
             return render_template_string(TEMPLATE, result=None, error='Nenhuma solução viável.')
-        plot_url = plot_region(constraints, feasible, best)
-        result = {'x_opt': best[0], 'y_opt': best[1], 'z_opt': round(best[2],4)}
+        plot_url = plot_region(constraints, feasible, best, xmax, ymax)
+        result = {'x_opt': best[0], 'y_opt': best[1], 'z_opt': round(best[2],4), 'feasible_table': feasible_table}
         return render_template_string(TEMPLATE, result=result, plot_url=plot_url, error=None)
     except Exception as e:
         return render_template_string(TEMPLATE, result=None, error=str(e)), 400
